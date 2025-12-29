@@ -6,62 +6,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <style>
-    body {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      background: #f7f7f7;
-      margin: 0;
-      padding: 20px;
-      display: flex;
-      justify-content: center;
+    body{
+      font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      background:#f7f7f7;margin:0;padding:20px;display:flex;justify-content:center
     }
-    .card {
-      background: #fff;
-      padding: 24px;
-      max-width: 520px;
-      width: 100%;
-      border-radius: 10px;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+    .card{
+      background:#fff;padding:24px;max-width:520px;width:100%;
+      border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.08)
     }
-    h1 {
-      margin-top: 0;
-      font-size: 22px;
+    h1{margin:0 0 10px;font-size:22px}
+    label{display:block;margin-top:14px;font-weight:600}
+    input{
+      width:100%;padding:10px;margin-top:6px;border-radius:6px;border:1px solid #ccc;
+      font-size:16px
     }
-    label {
-      display: block;
-      margin-top: 14px;
-      font-weight: 600;
+    button{
+      margin-top:18px;width:100%;padding:12px;background:#111;color:#fff;border:0;
+      border-radius:6px;font-size:16px;cursor:pointer
     }
-    input {
-      width: 100%;
-      padding: 10px;
-      margin-top: 6px;
-      border-radius: 6px;
-      border: 1px solid #ccc;
+    button:active{transform:translateY(1px)}
+    .result{
+      margin-top:20px;padding:12px;border-radius:6px;background:#f0f0f0;
+      white-space:pre-wrap;font-size:14px;min-height:44px
     }
-    button {
-      margin-top: 18px;
-      width: 100%;
-      padding: 12px;
-      background: #111;
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      font-size: 16px;
-      cursor: pointer;
-    }
-    button:hover {
-      background: #333;
-    }
-    .result {
-      margin-top: 20px;
-      padding: 12px;
-      border-radius: 6px;
-      background: #f0f0f0;
-      white-space: pre-wrap;
-      font-size: 14px;
-    }
-    .ok { color: #0a7; font-weight: bold; }
-    .bad { color: #c00; font-weight: bold; }
+    .ok{color:#0a7;font-weight:700}
+    .bad{color:#c00;font-weight:700}
+    .muted{color:#666;font-size:12px;margin-top:8px}
   </style>
 </head>
 
@@ -70,20 +40,112 @@
     <h1>Expiry Checker</h1>
 
     <label>Server URL</label>
-    <input id="server" placeholder="https://example.com">
+    <input id="server" placeholder="https://example.com" value="https://cf.1575-cdn.me">
 
     <label>Username</label>
     <input id="username" placeholder="username">
 
     <label>Password</label>
-    <input id="password" placeholder="password">
+    <input id="password" type="password" placeholder="password">
 
-    <button onclick="check()">Check Expiry</button>
+    <button id="checkBtn" type="button">Check Expiry</button>
 
-    <div id="output" class="result"></div>
+    <div id="output" class="result">Ready.</div>
+    <div class="muted">
+      Note: If the server blocks browser requests (CORS), you’ll see an error here — the click should still show “Checking…”.
+    </div>
   </div>
 
 <script>
-async function check() {
-  const server = document.getElementById("server").value.trim().replace(/\/+$/, "");
-  const user = document
+(function () {
+  var btn = document.getElementById("checkBtn");
+  var out = document.getElementById("output");
+
+  function get(path) { return document.getElementById(path).value || ""; }
+
+  function safeJSONParse(text) {
+    // Remove BOM and trim
+    text = (text || "").replace(/^\uFEFF/, "").trim();
+    return JSON.parse(text);
+  }
+
+  function renderResult(status, expiryDate, daysRemaining) {
+    var statusHtml = (daysRemaining >= 0)
+      ? '<span class="ok">ACTIVE</span>'
+      : '<span class="bad">EXPIRED</span>';
+
+    out.innerHTML =
+      "<b>Status:</b> " + statusHtml + "\n" +
+      "<b>Expiry date:</b> " + expiryDate + "\n" +
+      "<b>Days remaining:</b> " + daysRemaining;
+  }
+
+  async function check() {
+    try {
+      out.textContent = "Checking…";
+
+      var server = get("server").trim().replace(/\/+$/, "");
+      var user = get("username").trim();
+      var pass = get("password").trim();
+
+      if (!server || !user || !pass) {
+        out.textContent = "Please fill in Server URL, Username and Password.";
+        return;
+      }
+
+      var url = server + "/player_api.php?username=" + encodeURIComponent(user) +
+                "&password=" + encodeURIComponent(pass);
+
+      // Cache bust to avoid stale responses
+      url += "&_=" + Date.now();
+
+      var res = await fetch(url, { method: "GET", cache: "no-store", mode: "cors" });
+      var text = await res.text();
+
+      if (!res.ok) {
+        out.textContent = "HTTP " + res.status + " " + res.statusText + "\n\n" +
+                          text.slice(0, 500);
+        return;
+      }
+
+      var data = safeJSONParse(text);
+
+      // Avoid optional chaining for compatibility
+      var user_info = data && data.user_info ? data.user_info : null;
+      var exp = user_info && user_info.exp_date ? user_info.exp_date : null;
+
+      if (!exp || exp === "0") {
+        out.textContent = "Could not read exp_date from response.\n\n" +
+                          text.slice(0, 500);
+        return;
+      }
+
+      var expiry = new Date(parseInt(exp, 10) * 1000);
+      if (isNaN(expiry.getTime())) {
+        out.textContent = "exp_date was present but could not be converted: " + exp;
+        return;
+      }
+
+      var now = new Date();
+      var days = Math.floor((expiry.getTime() - now.getTime()) / 86400000);
+
+      renderResult(
+        (user_info && user_info.status) ? user_info.status : "Unknown",
+        expiry.toLocaleString(),
+        days
+      );
+
+    } catch (e) {
+      out.textContent =
+        "Error:\n" + (e && e.message ? e.message : String(e)) +
+        "\n\nMost common causes:\n" +
+        "• The IPTV server blocks browser requests (CORS)\n" +
+        "• The response wasn’t JSON (block page / HTML)\n";
+    }
+  }
+
+  btn.addEventListener("click", check);
+})();
+</script>
+</body>
+</html>
