@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IPTV Expiry Checker (Xtream Codes)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; max-width: 760px; }
+    h1 { font-size: 20px; margin: 0 0 12px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 14px; margin: 12px 0; }
+    label { display:block; font-weight: 600; margin: 10px 0 6px; }
+    input, textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; }
+    textarea { min-height: 110px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    button { padding: 10px 12px; border: 1px solid #111; background: #111; color: #fff; border-radius: 8px; cursor: pointer; }
+    button.secondary { background: #fff; color: #111; }
+    .muted { color: #666; font-size: 13px; }
+    .out { white-space: pre-wrap; background: #f7f7f7; border: 1px solid #eee; padding: 10px; border-radius: 8px; }
+    .ok { color: #0a7; font-weight: 700; }
+    .bad { color: #c20; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>IPTV Expiry Checker (Xtream Codes)</h1>
+  <div class="muted">
+    Enter your server + username + password. Click <b>Fetch</b> to read <code>player_api.php</code> and show your expiry date.
+    If fetch fails (CORS), paste the JSON response into the second box and click <b>Parse JSON</b>.
+  </div>
+
+  <div class="card">
+    <label>Server base URL (include https:// or http://)</label>
+    <input id="server" placeholder="https://cf.1575-cdn.me" value="https://cf.1575-cdn.me"/>
+
+    <div class="row">
+      <div>
+        <label>Username</label>
+        <input id="username" placeholder="USER1234" />
+      </div>
+      <div>
+        <label>Password</label>
+        <input id="password" placeholder="PASS1234" />
+      </div>
+    </div>
+
+    <label>Built URL (copy if you want)</label>
+    <input id="builtUrl" readonly />
+
+    <div style="display:flex; gap:10px; margin-top:10px;">
+      <button id="fetchBtn">Fetch</button>
+      <button class="secondary" id="copyBtn">Copy URL</button>
+      <button class="secondary" id="clearBtn">Clear</button>
+    </div>
+
+    <p class="muted" id="fetchNote"></p>
+    <div class="out" id="result">Result will appear here.</div>
+  </div>
+
+  <div class="card">
+    <label>Fallback: Paste JSON block here (from the browser)</label>
+    <textarea id="jsonPaste" placeholder='Paste the response (it usually starts with {"user_info": ... }'></textarea>
+    <div style="display:flex; gap:10px; margin-top:10px;">
+      <button id="parseBtn">Parse JSON</button>
+      <button class="secondary" id="sampleBtn">Load sample</button>
+    </div>
+  </div>
+
+<script>
+  const el = (id) => document.getElementById(id);
+
+  function buildUrl() {
+    const base = (el("server").value || "").trim().replace(/\/+$/, "");
+    const u = encodeURIComponent((el("username").value || "").trim());
+    const p = encodeURIComponent((el("password").value || "").trim());
+    const url = `${base}/player_api.php?username=${u}&password=${p}`;
+    el("builtUrl").value = url;
+    return url;
+  }
+
+  function fmtDateFromUnixSeconds(sec) {
+    if (!sec || sec === "0" || sec === 0) return null;
+    const n = Number(sec);
+    if (!Number.isFinite(n)) return null;
+    // Xtream exp_date is usually in seconds (not ms)
+    const d = new Date(n * 1000);
+    if (isNaN(d.getTime())) return null;
+    // Display both local and UTC to avoid confusion
+    return {
+      local: d.toLocaleString(),
+      utc: d.toUTCString(),
+      date: d
+    };
+  }
+
+  function daysRemaining(expDate) {
+    const now = new Date();
+    const ms = expDate.getTime() - now.getTime();
+    return Math.floor(ms / (1000 * 60 * 60 * 24));
+  }
+
+  function render(data) {
+    // Xtream formats vary slightly; most have user_info.exp_date
+    const userInfo = data?.user_info || data?.userInfo || null;
+
+    const status = userInfo?.status ?? data?.status ?? null;
+    const exp = userInfo?.exp_date ?? userInfo?.expDate ?? null;
+    const activeCons = userInfo?.active_cons ?? userInfo?.activeCons ?? null;
+    const maxCons = userInfo?.max_connections ?? userInfo?.maxConnections ?? null;
+
+    const parsed = fmtDateFromUnixSeconds(exp);
+    const lines = [];
+
+    lines.push("Parsed fields:");
+    lines.push(`• status: ${status ?? "(not found)"}`);
+    lines.push(`• exp_date: ${exp ?? "(not found)"}`);
+    if (activeCons != null || maxCons != null) {
+      lines.push(`• connections: ${activeCons ?? "?"} active / ${maxCons ?? "?"} max`);
+    }
+
+    if (!parsed) {
+      lines.push("");
+      lines.push("Could not convert exp_date. (It may be missing, 0, or not a unix timestamp.)");
+      el("result").textContent = lines.join("\n");
+      return;
+    }
+
+    const dLeft = daysRemaining(parsed.date);
+    const expired = dLeft < 0;
+
+    lines.push("");
+    lines.push("Expiry date:");
+    lines.push(`• Local: ${parsed.local}`);
+    lines.push(`• UTC:   ${parsed.utc}`);
+    lines.push(`• Days remaining: ${dLeft}`);
+
+    lines.push("");
+    lines.push(expired ? "ACCOUNT: EXPIRED" : "ACCOUNT: ACTIVE");
+
+    el("result").innerHTML = `
+      <div class="${expired ? "bad" : "ok"}">${expired ? "ACCOUNT: EXPIRED" : "ACCOUNT: ACTIVE"}</div>
+      <div style="margin-top:8px; white-space:pre-wrap;">${escapeHtml(lines.join("\n"))}</div>
+    `;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
+
+  function safeJsonParse(text) {
+    // Some panels return text with BOM or leading spaces
+    const t = (text || "").trim().replace(/^\uFEFF/, "");
+    return JSON.parse(t);
+  }
+
+  // Wire up events
+  ["server", "username", "password"].forEach(id => el(id).addEventListener("input", buildUrl));
+  buildUrl();
+
+  el("copyBtn").addEventListener("click", async () => {
+    buildUrl();
+    await navigator.clipboard.writeText(el("builtUrl").value);
+    el("fetchNote").textContent = "Copied URL to clipboard.";
+  });
+
+  el("clearBtn").addEventListener("click", () => {
+    el("username").value = "";
+    el("password").value = "";
+    el("jsonPaste").value = "";
+    el("fetchNote").textContent = "";
+    el("result").textContent = "Result will appear here.";
+    buildUrl();
+  });
+
+  el("sampleBtn").addEventListener("click", () => {
+    el("jsonPaste").value = JSON.stringify({
+      user_info: {
+        username: "USER1234",
+        status: "Active",
+        exp_date: "1791496800",
+        active_cons: "0",
+        max_connections: "1"
+      }
+    }, null, 2);
+  });
+
+  el("parseBtn").addEventListener("click", () => {
+    try {
+      const obj = safeJsonParse(el("jsonPaste").value);
+      render(obj);
+      el("fetchNote").textContent = "Parsed pasted JSON.";
+    } catch (e) {
+      el("fetchNote").textContent = "Could not parse JSON. Make sure you pasted the full response.";
+      el("result").textContent = String(e);
+    }
+  });
+
+  el("fetchBtn").addEventListener("click", async () => {
+    const url = buildUrl();
+    el("fetchNote").textContent = "Fetching…";
+    try {
+      const r = await fetch(url, { method: "GET", cache: "no-store" });
+      const text = await r.text();
+
+      // Some servers return HTML on block pages; show helpful error
+      if (!r.ok) {
+        el("fetchNote").textContent = `HTTP error: ${r.status} ${r.statusText}. You can paste the response into the JSON box below.`;
+        el("result").textContent = text.slice(0, 2000);
+        return;
+      }
+
+      // Try parse and render
+      const obj = safeJsonParse(text);
+      render(obj);
+      el("fetchNote").textContent = "Fetched and parsed OK.";
+    } catch (e) {
+      el("fetchNote").textContent =
+        "Fetch failed (often CORS). Open the built URL in a new tab, copy the response, then paste it into the JSON box and click Parse JSON.";
+      el("result").textContent = String(e);
+    }
+  });
+</script>
+</body>
+</html>
