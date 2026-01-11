@@ -52,8 +52,17 @@
       justify-content:space-between;
       gap:12px;
     }
-    h1{ margin:0 0 6px; font-size:22px; }
-    .disclaimer{ margin:0; color:var(--muted); font-size:12px; }
+    h1{
+      margin:0 0 6px;
+      font-size:22px;
+      line-height:1.2;
+    }
+    .disclaimer{
+      margin:0;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.35;
+    }
     .toggle{
       border:1px solid var(--border);
       background:transparent;
@@ -62,8 +71,14 @@
       border-radius:10px;
       cursor:pointer;
       font-size:13px;
+      white-space:nowrap;
     }
-    label{ display:block; margin-top:14px; font-weight:600; font-size:14px; }
+    label{
+      display:block;
+      margin-top:14px;
+      font-weight:600;
+      font-size:14px;
+    }
     input{
       width:100%;
       padding:10px;
@@ -75,12 +90,6 @@
       font-size:16px;
       box-sizing:border-box;
     }
-    .notice{
-      margin-top:6px;
-      font-size:12px;
-      color:#0aa07a;
-      display:none;
-    }
     .btnrow{
       display:flex;
       gap:10px;
@@ -88,7 +97,7 @@
       flex-wrap:wrap;
     }
     button.primary{
-      flex:1 1 220px;
+      flex: 1 1 220px;
       padding:12px;
       background:var(--btn);
       color:var(--btnText);
@@ -98,7 +107,7 @@
       cursor:pointer;
     }
     button.secondary{
-      flex:1 1 140px;
+      flex: 1 1 140px;
       padding:12px;
       background:transparent;
       color:var(--text);
@@ -106,6 +115,10 @@
       border-radius:10px;
       font-size:14px;
       cursor:pointer;
+    }
+    button:disabled{
+      opacity:.6;
+      cursor:not-allowed;
     }
     .result{
       margin-top:16px;
@@ -120,6 +133,12 @@
     .ok{ color:#0aa07a; font-weight:800; }
     .bad{ color:#d24545; font-weight:800; }
     .warn{ color:#c78a00; font-weight:800; }
+
+    .hint{
+      color:var(--muted);
+      font-size:12px;
+      margin-top:10px;
+    }
   </style>
 </head>
 
@@ -128,73 +147,231 @@
     <div class="topbar">
       <div>
         <h1>Expiry Checker</h1>
-        <p class="disclaimer">Runs in your browser only. Nothing is stored.</p>
+        <p class="disclaimer">Runs in your browser only. Nothing is stored or sent anywhere except to the IPTV server you enter.</p>
       </div>
-      <button id="themeBtn" class="toggle">Dark mode</button>
+      <button id="themeBtn" class="toggle" type="button" aria-label="Toggle dark mode">Dark mode</button>
     </div>
 
-    <label>Server URL</label>
-    <input id="server" value="https://" autocomplete="url">
-    <div id="httpsNotice" class="notice">Switched to HTTPS for security.</div>
+    <label>Server URL (HTTPS only)</label>
+    <input id="server" placeholder="https://example.com" value="https://cf.1575-cdn.me" autocomplete="url">
 
     <label>Username</label>
-    <input id="username">
+    <input id="username" placeholder="username" autocomplete="username">
 
     <label>Password</label>
-    <input id="password" type="password">
+    <input id="password" type="password" placeholder="password" autocomplete="current-password">
 
     <div class="btnrow">
-      <button id="checkBtn" class="primary">Check expiry</button>
-      <button id="resetBtn" class="secondary">Reset</button>
+      <button id="checkBtn" class="primary" type="button">Check expiry</button>
+      <button id="copyBtn" class="secondary" type="button">Copy result</button>
+      <button id="resetBtn" class="secondary" type="button">Reset</button>
     </div>
 
     <div id="output" class="result">Ready.</div>
+    <div class="hint">
+      If you get a “fetch failed / CORS” error, the IPTV server is blocking browser requests. (Your account may still be active.)
+    </div>
   </div>
 
 <script>
 (function(){
-  var serverInput = document.getElementById("server");
-  var notice = document.getElementById("httpsNotice");
+  var out = document.getElementById("output");
+  var btn = document.getElementById("checkBtn");
+  var copyBtn = document.getElementById("copyBtn");
+  var resetBtn = document.getElementById("resetBtn");
+  var themeBtn = document.getElementById("themeBtn");
 
-  function normalizeServer(value){
-    var v = (value || "").trim();
-    if (!v) return "https://";
+  var lastResultText = "";
 
-    var changed = false;
+  function trim(v){ return (v || "").trim(); }
 
-    if (v.startsWith("http://")){
-      v = v.slice(7);
-      changed = true;
-    } else if (v.startsWith("https://")){
-      v = v.slice(8);
-    }
-
-    if (v.endsWith("/")) v = v.slice(0, -1);
-
-    var finalUrl = "https://" + v;
-    if (changed) {
-      notice.style.display = "block";
-      setTimeout(function(){ notice.style.display = "none"; }, 2500);
-    }
-    return finalUrl;
+  function setOutputText(t){
+    lastResultText = t;
+    out.textContent = t;
   }
 
-  serverInput.addEventListener("paste", function(){
-    setTimeout(function(){
-      serverInput.value = normalizeServer(serverInput.value);
-    }, 0);
+  function setOutputHTML(html, plainTextFallback){
+    lastResultText = plainTextFallback || "";
+    out.innerHTML = html;
+  }
+
+  function unixToLocal(secStr){
+    var n = parseInt(secStr, 10);
+    if (!isFinite(n)) return null;
+    var d = new Date(n * 1000);
+    if (isNaN(d.getTime())) return null;
+    return d;
+  }
+
+  function applyTheme(theme){
+    if (theme === "dark") document.body.classList.add("dark");
+    else document.body.classList.remove("dark");
+    themeBtn.textContent = document.body.classList.contains("dark") ? "Light mode" : "Dark mode";
+  }
+
+  // Load theme
+  try {
+    var saved = localStorage.getItem("expiry_checker_theme");
+    if (saved) applyTheme(saved);
+    else applyTheme("light");
+  } catch(e) {
+    applyTheme("light");
+  }
+
+  themeBtn.addEventListener("click", function(){
+    var nowDark = !document.body.classList.contains("dark");
+    applyTheme(nowDark ? "dark" : "light");
+    try { localStorage.setItem("expiry_checker_theme", nowDark ? "dark" : "light"); } catch(e) {}
   });
 
-  serverInput.addEventListener("blur", function(){
-    serverInput.value = normalizeServer(serverInput.value);
+  resetBtn.addEventListener("click", function(){
+    document.getElementById("server").value = "https://cf.1575-cdn.me";
+    document.getElementById("username").value = "";
+    document.getElementById("password").value = "";
+    setOutputText("Ready.");
   });
 
-  // Prevent deleting https://
-  serverInput.addEventListener("keydown", function(e){
-    if (serverInput.selectionStart < 8 && e.key === "Backspace") {
-      e.preventDefault();
+  copyBtn.addEventListener("click", async function(){
+    var text = lastResultText || out.textContent || "";
+    text = trim(text);
+    if (!text) text = "No result to copy.";
+    try {
+      await navigator.clipboard.writeText(text);
+      setOutputText("Copied result to clipboard.\n\n" + text);
+    } catch(e) {
+      setOutputText("Could not access clipboard. Please select and copy manually.\n\n" + text);
     }
   });
+
+  function connMessage(activeCons, maxCons){
+    // Returns { html, text }
+    if (activeCons === null || maxCons === null) {
+      return {
+        html: "<b>Connections:</b> Unknown (provider did not supply connection limits)<br>",
+        text: "Connections: Unknown (provider did not supply connection limits)\n"
+      };
+    }
+
+    var a = parseInt(activeCons, 10);
+    var m = parseInt(maxCons, 10);
+
+    if (!isFinite(a) || !isFinite(m)) {
+      return {
+        html: "<b>Connections:</b> Unknown (invalid values)<br>",
+        text: "Connections: Unknown (invalid values)\n"
+      };
+    }
+
+    var reached = (m > 0 && a >= m);
+    var statusHtml = reached ? '<span class="warn">LIMIT REACHED</span>' : '<span class="ok">OK</span>';
+
+    return {
+      html: "<b>Connections:</b> " + a + " active / " + m + " max — " + statusHtml + "<br>",
+      text: "Connections: " + a + " active / " + m + " max — " + (reached ? "LIMIT REACHED" : "OK") + "\n"
+    };
+  }
+
+  async function check(){
+    btn.disabled = true;
+    setOutputText("Checking…");
+
+    try {
+      var server = trim(document.getElementById("server").value).replace(/\/+$/, "");
+      var user = trim(document.getElementById("username").value);
+      var pass = trim(document.getElementById("password").value);
+
+      if (!server || !user || !pass){
+        setOutputText("Please fill in Server URL, Username and Password.");
+        return;
+      }
+
+      // HTTPS-only validation
+      if (server.slice(0, 8).toLowerCase() !== "https://"){
+        setOutputText("Please use an HTTPS server URL (must start with https://).");
+        return;
+      }
+
+      var url = server + "/player_api.php?username=" + encodeURIComponent(user) +
+                "&password=" + encodeURIComponent(pass) + "&_=" + Date.now();
+
+      var res = await fetch(url, { method: "GET", cache: "no-store" });
+      var text = await res.text();
+
+      if (!res.ok){
+        setOutputText("HTTP " + res.status + " " + res.statusText + "\n\n" + text.slice(0, 600));
+        return;
+      }
+
+      var data;
+      try {
+        text = (text || "").replace(/^\uFEFF/, "").trim();
+        data = JSON.parse(text);
+      } catch(e) {
+        setOutputText("Response was not valid JSON (often a block/HTML page).\n\n" + text.slice(0, 600));
+        return;
+      }
+
+      // Expects data.user_info.exp_date etc.
+      var ui = (data && data.user_info) ? data.user_info : null;
+
+      var exp = (ui && ui.exp_date) ? ui.exp_date : null;
+      var status = (ui && ui.status) ? ui.status : "Unknown";
+
+      // New: concurrent connection fields (provider-dependent)
+      var activeCons = (ui && ui.active_cons !== undefined) ? ui.active_cons : null;
+      var maxCons = (ui && ui.max_connections !== undefined) ? ui.max_connections : null;
+
+      if (!exp || exp === "0"){
+        setOutputText("Could not find user_info.exp_date in response.\n\n" + text.slice(0, 600));
+        return;
+      }
+
+      var expiryDate = unixToLocal(exp);
+      if (!expiryDate){
+        setOutputText("exp_date found but could not convert: " + exp);
+        return;
+      }
+
+      var days = Math.floor((expiryDate.getTime() - Date.now()) / 86400000);
+      var active = days >= 0;
+
+      var conn = connMessage(activeCons, maxCons);
+
+      var plain =
+        "Status: " + (active ? "ACTIVE" : "EXPIRED") + "\n" +
+        "API status: " + status + "\n" +
+        conn.text +
+        "Expiry date: " + expiryDate.toLocaleString() + "\n" +
+        "Days remaining: " + days;
+
+      var html =
+        "<b>Status:</b> " + (active ? '<span class="ok">ACTIVE</span>' : '<span class="bad">EXPIRED</span>') + "<br>" +
+        "<b>API status:</b> " + status + "<br>" +
+        conn.html +
+        "<b>Expiry date:</b> " + expiryDate.toLocaleString() + "<br>" +
+        "<b>Days remaining:</b> " + days;
+
+      // Additional nudge if limit reached (only when we know)
+      var a = parseInt(activeCons, 10);
+      var m = parseInt(maxCons, 10);
+      if (isFinite(a) && isFinite(m) && m > 0 && a >= m) {
+        html += "<br><b>Note:</b> If streams are failing, a connection limit may be blocking additional devices.";
+        plain += "\n\nNote: If streams are failing, a connection limit may be blocking additional devices.";
+      }
+
+      setOutputHTML(html, plain);
+
+    } catch(e) {
+      setOutputText(
+        "Error: " + (e && e.message ? e.message : String(e)) + "\n\n" +
+        "Most common cause: the IPTV server blocks browser requests (CORS)."
+      );
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  btn.addEventListener("click", check);
 })();
 </script>
 
